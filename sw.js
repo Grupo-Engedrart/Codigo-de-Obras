@@ -1,7 +1,7 @@
 // Service Worker para Consulta de Obras PWA
-const CACHE_NAME = 'consulta-obras-v2';
-const STATIC_CACHE = 'consulta-obras-static-v2';
-const DYNAMIC_CACHE = 'consulta-obras-dynamic-v2';
+const CACHE_NAME = 'consulta-obras-v3'; // Mudei de v2 para v3
+const STATIC_CACHE = 'consulta-obras-static-v3';
+const DYNAMIC_CACHE = 'consulta-obras-dynamic-v3';
 
 // Arquivos para cache estático
 const STATIC_ASSETS = [
@@ -70,8 +70,8 @@ self.addEventListener('fetch', (event) => {
     
     // Estratégia de cache para diferentes tipos de recursos
     if (url.origin === location.origin) {
-        // Recursos locais - Cache First
-        event.respondWith(cacheFirst(request));
+    // Recursos locais - Network First (Prioriza sempre a versão mais nova)
+    event.respondWith(networkFirst(request));
     } else if (url.hostname === 'fonts.googleapis.com' || 
                url.hostname === 'fonts.gstatic.com' ||
                url.hostname === 'cdn.tailwindcss.com') {

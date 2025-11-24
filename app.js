@@ -97,7 +97,7 @@ class ObraApp {
         try {
             let data;
             
-            if (this.dataSource === 'google' && this.isOnline && (forceRefresh || !this.hasCachedData())) {
+            if (this.dataSource === 'google' && this.isOnline) {
                 // Tentar carregar do Google Sheets
                 data = await this.loadFromGoogleSheets();
                 if (data) {
@@ -215,17 +215,24 @@ class ObraApp {
     }
 
      filtrarObras(termo) {
-       const termoLower = termo.toLowerCase().trim();
+       // 1. Limpa o termo e divide em palavras separadas (tokens)
+       const termosBusca = termo.toLowerCase().trim().split(/\s+/).filter(t => t.length > 0);
 
-       if (!termoLower) {
+       if (termosBusca.length === 0) {
           this.obrasFiltradas = this.obras;
         } else {
-           this.obrasFiltradas = this.obras.filter(obra => 
-              String(obra.codigo).toLowerCase().includes(termoLower) ||
-              String(obra.empresa).toLowerCase().includes(termoLower) ||
-              String(obra.af).toLowerCase().includes(termoLower) ||
-              String(obra.descricao).toLowerCase().includes(termoLower)
-            );
+           this.obrasFiltradas = this.obras.filter(obra => {
+              // 2. Cria uma "super string" com todos os dados da obra juntos
+              const conteudoObra = [
+                  String(obra.codigo),
+                  String(obra.empresa),
+                  String(obra.af),
+                  String(obra.descricao)
+              ].join(' ').toLowerCase();
+
+              // 3. Verifica se TODAS as palavras digitadas aparecem na obra
+              return termosBusca.every(palavra => conteudoObra.includes(palavra));
+            });
         }
 
         this.renderObras();
