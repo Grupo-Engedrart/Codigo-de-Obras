@@ -9,7 +9,7 @@ class ObraApp {
         // CONFIGURAÇÃO: Use 'google' para Google Sheets ou 'exemplo' para dados de exemplo
         this.dataSource = 'google'; // Altere para 'google' quando configurar sua planilha
         
-        this.googleSheetId = '1HRJkTrTHbmdHYmxzrd1r1wCU7bCq-g6tkB36VMNfZyw'; // Substitua pelo ID da sua planilha
+        this.googleSheetId = '1lY0fKftKyYyyiZneml-rMakLuFS4zH5T7WyJAheb9Hc'; // Substitua pelo ID da sua planilha
         this.googleSheetUrl = `https://docs.google.com/spreadsheets/d/${this.googleSheetId}/gviz/tq?tqx=out:json`;
         
         this.init();
