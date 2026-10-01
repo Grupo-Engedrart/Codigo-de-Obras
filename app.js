@@ -1,17 +1,24 @@
 // App de Consulta de Obras - JavaScript Principal
+//
+// Fonte (30/09/2026): lista pública publicada pelo Dataflow a cada carga do Mega (árvore de projetos), num bucket
+// separado e só com identificação da obra (código Reduzido, empresa, contrato, AF, descrição). Obra criada no Mega
+// aparece sozinha na carga seguinte; finalizadas saem. Antes a fonte era uma planilha mantida à mão.
+const FONTE_OBRAS = 'https://publico.dataflow.tec.br/engedrart/obras.json';
+const CHAVE_CACHE = 'obras_dataflow_v1';
+
+/** Texto vindo dos dados vai para a tela sempre escapado (nunca como HTML). */
+function esc(valor) {
+    return String(valor ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+const rotuloCodigo = (codigo) => `Código - ${codigo}`;
+
 class ObraApp {
     constructor() {
         this.obras = [];
         this.obrasFiltradas = [];
         this.isOnline = navigator.onLine;
         this.lastUpdate = null;
-        
-        // CONFIGURAÇÃO: Use 'google' para Google Sheets ou 'exemplo' para dados de exemplo
-        this.dataSource = 'google'; // Altere para 'google' quando configurar sua planilha
-        
-        this.googleSheetId = '1lY0fKftKyYyyiZneml-rMakLuFS4zH5T7WyJAheb9Hc'; // Substitua pelo ID da sua planilha
-        this.googleSheetUrl = `https://docs.google.com/spreadsheets/d/${this.googleSheetId}/gviz/tq?tqx=out:json`;
-        
         this.init();
     }
 
@@ -19,14 +26,12 @@ class ObraApp {
         this.setupEventListeners();
         this.checkConnection();
         this.loadData();
-        this.setupServiceWorker();
     }
 
     setupEventListeners() {
-        // Busca
         const searchInput = document.getElementById('searchInput');
         const clearSearch = document.getElementById('clearSearch');
-        
+
         searchInput.addEventListener('input', (e) => {
             this.filtrarObras(e.target.value);
             clearSearch.classList.toggle('hidden', !e.target.value);
@@ -38,38 +43,26 @@ class ObraApp {
             clearSearch.classList.add('hidden');
         });
 
-        // Botões
-        document.getElementById('refreshBtn').addEventListener('click', () => {
-            this.loadData(true);
+        document.getElementById('refreshBtn').addEventListener('click', () => this.loadData());
+        document.getElementById('retryBtn').addEventListener('click', () => this.loadData());
+
+        // Clique num card: pelo atributo data-codigo (código com apóstrofo ou espaço não quebra a tela).
+        document.getElementById('obrasList').addEventListener('click', (e) => {
+            const card = e.target.closest('[data-codigo]');
+            if (card) this.mostrarDetalhes(card.dataset.codigo);
         });
 
-        document.getElementById('retryBtn').addEventListener('click', () => {
-            this.loadData();
-        });
-
-        // Modal
-        document.getElementById('closeModal').addEventListener('click', () => {
-            this.closeModal();
-        });
-
-        document.getElementById('backToList').addEventListener('click', () => {
-            this.closeModal();
-        });
-
-        // Fechar modal ao clicar fora
+        document.getElementById('closeModal').addEventListener('click', () => this.closeModal());
+        document.getElementById('backToList').addEventListener('click', () => this.closeModal());
         document.getElementById('detalhesModal').addEventListener('click', (e) => {
-            if (e.target.id === 'detalhesModal') {
-                this.closeModal();
-            }
+            if (e.target.id === 'detalhesModal') this.closeModal();
         });
 
-        // Eventos de conexão
         window.addEventListener('online', () => {
             this.isOnline = true;
             this.updateConnectionStatus();
             this.loadData();
         });
-
         window.addEventListener('offline', () => {
             this.isOnline = false;
             this.updateConnectionStatus();
@@ -82,7 +75,6 @@ class ObraApp {
 
     updateConnectionStatus() {
         const offlineIndicator = document.getElementById('offlineIndicator');
-        
         if (this.isOnline) {
             offlineIndicator.classList.add('hidden');
         } else {
@@ -91,208 +83,121 @@ class ObraApp {
         }
     }
 
-    async loadData(forceRefresh = false) {
+    async loadData() {
         this.showLoading();
-        
-        try {
-            let data;
-            
-            if (this.dataSource === 'google' && this.isOnline) {
-                // Tentar carregar do Google Sheets
-                data = await this.loadFromGoogleSheets();
-                if (data) {
-                    this.saveToCache(data);
-                    this.lastUpdate = new Date();
-                    this.showStatus('Dados atualizados com sucesso', 'success');
-                }
-            }
-            
-            if (!data && this.hasCachedData()) {
-                // Usar dados em cache
-                data = this.loadFromCache();
-                if (data) {
-                    this.showStatus('Usando dados em cache', 'info');
-                }
-            }
-            
-            if (!data) {
-                // Dados de exemplo para demonstração
-                data = this.getSampleData();
-                this.showStatus('Usando dados de exemplo', 'info');
-            }
-            
-             this.obras = data;
-             this.obrasFiltradas = data;
-             this.renderObras();
-             this.updateLastUpdateTime();
+        let data = null;
 
-             // NOVO: esconder skeleton
-              const loadingState = document.getElementById('loadingState');
-             if (loadingState) {
-             loadingState.classList.add('hidden');
-             }
-            
-        } catch (error) {
-            console.error('Erro ao carregar dados:', error);
-            this.showError();
+        if (this.isOnline) {
+            data = await this.loadFromDataflow();
+            if (data) {
+                this.saveToCache(data);
+                this.showStatus('Dados atualizados com sucesso', 'success');
+            }
         }
+
+        if (!data) {
+            data = this.loadFromCache();
+            if (data) this.showStatus('Usando dados em cache (podem estar desatualizados)', 'warning');
+        }
+
+        // Sem rede e sem cópia: erro claro. Nunca mostrar obras de exemplo (alguém poderia anotar um código falso).
+        if (!data) {
+            this.showError();
+            return;
+        }
+
+        this.obras = data;
+        const termo = document.getElementById('searchInput').value;
+        this.filtrarObras(termo);
+        this.updateLastUpdateTime();
+        document.getElementById('loadingState').classList.add('hidden');
     }
 
-    async loadFromGoogleSheets() {
+    async loadFromDataflow() {
         try {
-            // Nota: Para usar com sua planilha, você precisa:
-            // 1. Tornar a planilha pública ou usar uma API key
-            // 2. Configurar o CORS apropriadamente
-            // 3. Ajustar o parsing conforme o formato da sua planilha
-            
-            const response = await fetch(this.googleSheetUrl);
-            const text = await response.text();
-            
-            // Parse JSONP response
-            const jsonText = text.substring(text.indexOf('(') + 1, text.lastIndexOf(')'));
-            const data = JSON.parse(jsonText);
-            
-            return this.parseGoogleSheetsData(data);
+            const response = await fetch(FONTE_OBRAS, { cache: 'no-store' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const json = await response.json();
+            if (!json || !Array.isArray(json.obras)) throw new Error('formato inesperado');
+            this.lastUpdate = json.atualizado_em ? new Date(json.atualizado_em) : new Date();
+            return json.obras
+                .filter((o) => o && o.codigo)
+                .map((o) => ({
+                    codigo: String(o.codigo),
+                    empresa: String(o.empresa || ''),
+                    contrato: String(o.contrato || ''),
+                    af: String(o.af || ''),
+                    descricao: String(o.descricao || ''),
+                }));
         } catch (error) {
-            console.error('Erro ao carregar do Google Sheets:', error);
+            console.error('Erro ao carregar a lista de obras:', error);
             return null;
         }
     }
 
-    parseGoogleSheetsData(data) {
-        const rows = data.table?.rows || [];
-        const obras = [];
-        
-        // Assumindo que as colunas são: Código, Empresa, AF, Descrição
-        rows.forEach(row => {
-            const cells = row.c || [];
-            if (cells.length >= 4) {
-                obras.push({
-                    codigo: cells[0]?.v || '',
-                    empresa: cells[1]?.v || '',
-                    af: cells[2]?.v || '',
-                    descricao: cells[3]?.v || ''
-                });
-            }
-        });
-        
-        return obras;
-    }
-
-    getSampleData() {
-        return [
-            {
-                codigo: "OB-001",
-                empresa: "Construtora Silva",
-                af: "AF2024-001",
-                descricao: "Fundação do edifício residencial Torres do Sol"
-            },
-            {
-                codigo: "OB-002", 
-                empresa: "Engenharia Santos",
-                af: "AF2024-002",
-                descricao: "Instalação elétrica do centro comercial Plaza"
-            },
-            {
-                codigo: "OB-003",
-                empresa: "Construtora Silva", 
-                af: "AF2024-003",
-                descricao: "Revestimento externo do hospital municipal"
-            },
-            {
-                codigo: "OB-004",
-                empresa: "Obras Rápidas Ltda",
-                af: "AF2024-004", 
-                descricao: "Pavimentação da avenida principal"
-            },
-            {
-                codigo: "OB-005",
-                empresa: "Engenharia Santos",
-                af: "AF2024-005",
-                descricao: "Instalação hidráulica do prédio administrativo"
-            }
-        ];
-    }
-
-     filtrarObras(termo) {
-       // 1. Limpa o termo e divide em palavras separadas (tokens)
-       const termosBusca = termo.toLowerCase().trim().split(/\s+/).filter(t => t.length > 0);
-
-       if (termosBusca.length === 0) {
-          this.obrasFiltradas = this.obras;
+    filtrarObras(termo) {
+        // Todas as palavras digitadas precisam aparecer na obra (código, empresa, contrato, AF ou descrição).
+        const termosBusca = termo.toLowerCase().trim().split(/\s+/).filter((t) => t.length > 0);
+        if (termosBusca.length === 0) {
+            this.obrasFiltradas = this.obras;
         } else {
-           this.obrasFiltradas = this.obras.filter(obra => {
-              // 2. Cria uma "super string" com todos os dados da obra juntos
-              const conteudoObra = [
-                  String(obra.codigo),
-                  String(obra.empresa),
-                  String(obra.af),
-                  String(obra.descricao)
-              ].join(' ').toLowerCase();
-
-              // 3. Verifica se TODAS as palavras digitadas aparecem na obra
-              return termosBusca.every(palavra => conteudoObra.includes(palavra));
+            this.obrasFiltradas = this.obras.filter((obra) => {
+                const conteudoObra = [rotuloCodigo(obra.codigo), obra.empresa, obra.contrato, obra.af, obra.descricao].join(' ').toLowerCase();
+                return termosBusca.every((palavra) => conteudoObra.includes(palavra));
             });
         }
-
         this.renderObras();
     }
 
     renderObras() {
         const obrasList = document.getElementById('obrasList');
         const emptyState = document.getElementById('emptyState');
-        
+
         if (this.obrasFiltradas.length === 0) {
             obrasList.classList.add('hidden');
             emptyState.classList.remove('hidden');
             return;
         }
-        
+
         emptyState.classList.add('hidden');
         obrasList.classList.remove('hidden');
-        
-        obrasList.innerHTML = this.obrasFiltradas.map(obra => `
-            <div class="obra-card bg-white rounded-lg shadow-sm border border-gray-200 p-4 cursor-pointer hover:shadow-md transition-shadow" 
-                 onclick="app.mostrarDetalhes('${obra.codigo}')">
-                <div class="flex justify-between items-start mb-2">
-                    <h3 class="text-lg font-bold text-gray-900">${obra.codigo}</h3>
-                    <span class="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded">${obra.af}</span>
+
+        obrasList.innerHTML = this.obrasFiltradas
+            .map(
+                (obra) => `
+            <div class="obra-card bg-white rounded-lg shadow-sm border border-gray-200 p-4 cursor-pointer hover:shadow-md transition-shadow"
+                 data-codigo="${esc(obra.codigo)}" role="button" tabindex="0">
+                <div class="flex justify-between items-start mb-2 gap-2">
+                    <h3 class="text-lg font-bold text-gray-900">${esc(rotuloCodigo(obra.codigo))}</h3>
+                    ${obra.af ? `<span class="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded text-right">${esc(obra.af)}</span>` : ''}
                 </div>
-                <p class="text-gray-700 font-medium mb-1">${obra.empresa}</p>
-                <p class="text-gray-600 text-sm line-clamp-2">${obra.descricao}</p>
+                ${obra.empresa ? `<p class="text-gray-700 font-medium mb-1">${esc(obra.empresa)}</p>` : ''}
+                <p class="text-gray-600 text-sm line-clamp-2">${esc(obra.descricao)}</p>
             </div>
-        `).join('');
+        `,
+            )
+            .join('');
     }
 
     mostrarDetalhes(codigo) {
-        const obra = this.obras.find(o => o.codigo === codigo);
+        const obra = this.obras.find((o) => o.codigo === codigo);
         if (!obra) return;
-        
-        const content = document.getElementById('detalhesContent');
-        content.innerHTML = `
+
+        const campo = (titulo, valor, classe = 'text-lg font-medium') => `
+            <div class="bg-gray-50 p-4 rounded-lg">
+                <h4 class="text-sm font-medium text-gray-500 mb-1">${titulo}</h4>
+                <p class="${classe} text-gray-900">${esc(valor)}</p>
+            </div>`;
+
+        document.getElementById('detalhesContent').innerHTML = `
             <div class="space-y-4">
-                <div class="bg-gray-50 p-4 rounded-lg">
-                    <h4 class="text-sm font-medium text-gray-500 mb-1">Código da Obra</h4>
-                    <p class="text-lg font-bold text-gray-900">${obra.codigo}</p>
-                </div>
-                
-                <div class="bg-gray-50 p-4 rounded-lg">
-                    <h4 class="text-sm font-medium text-gray-500 mb-1">Empresa</h4>
-                    <p class="text-lg font-medium text-gray-900">${obra.empresa}</p>
-                </div>
-                
-                <div class="bg-gray-50 p-4 rounded-lg">
-                    <h4 class="text-sm font-medium text-gray-500 mb-1">AF</h4>
-                    <p class="text-lg font-medium text-gray-900">${obra.af}</p>
-                </div>
-                
-                <div class="bg-gray-50 p-4 rounded-lg">
-                    <h4 class="text-sm font-medium text-gray-500 mb-1">Descrição</h4>
-                    <p class="text-base text-gray-900">${obra.descricao}</p>
-                </div>
+                ${campo('Código da Obra', rotuloCodigo(obra.codigo), 'text-lg font-bold')}
+                ${obra.empresa ? campo('Empresa', obra.empresa) : ''}
+                ${obra.contrato ? campo('Contrato', obra.contrato) : ''}
+                ${obra.af ? campo('AF', obra.af) : ''}
+                ${campo('Descrição', obra.descricao, 'text-base')}
             </div>
         `;
-        
         document.getElementById('detalhesModal').classList.remove('hidden');
     }
 
@@ -317,14 +222,10 @@ class ObraApp {
     showStatus(message, type = 'info') {
         const statusBar = document.getElementById('statusBar');
         const statusText = document.getElementById('statusText');
-        
         statusText.textContent = message;
         statusBar.className = `px-4 py-2 text-sm ${this.getStatusClass(type)}`;
         statusBar.classList.remove('hidden');
-        
-        setTimeout(() => {
-            statusBar.classList.add('hidden');
-        }, 3000);
+        setTimeout(() => statusBar.classList.add('hidden'), 3000);
     }
 
     getStatusClass(type) {
@@ -332,24 +233,22 @@ class ObraApp {
             success: 'bg-green-50 text-green-800',
             warning: 'bg-yellow-50 text-yellow-800',
             error: 'bg-red-50 text-red-800',
-            info: 'bg-blue-50 text-blue-800'
+            info: 'bg-blue-50 text-blue-800',
         };
         return classes[type] || classes.info;
     }
 
     updateLastUpdateTime() {
         const lastUpdateElement = document.getElementById('lastUpdate');
-        if (this.lastUpdate) {
-            const timeStr = this.lastUpdate.toLocaleTimeString('pt-BR');
-            lastUpdateElement.textContent = `Atualizado: ${timeStr}`;
+        if (this.lastUpdate && !isNaN(this.lastUpdate)) {
+            lastUpdateElement.textContent = `Atualizado: ${this.lastUpdate.toLocaleDateString('pt-BR')}`;
         }
     }
 
-    // Cache Management
+    // Cópia local para uso sem internet (a última lista recebida).
     saveToCache(data) {
         try {
-            localStorage.setItem('obras_data', JSON.stringify(data));
-            localStorage.setItem('obras_last_update', new Date().toISOString());
+            localStorage.setItem(CHAVE_CACHE, JSON.stringify({ obras: data, atualizado_em: this.lastUpdate?.toISOString() ?? null }));
         } catch (error) {
             console.error('Erro ao salvar cache:', error);
         }
@@ -357,37 +256,23 @@ class ObraApp {
 
     loadFromCache() {
         try {
-            const data = localStorage.getItem('obras_data');
-            const lastUpdate = localStorage.getItem('obras_last_update');
-            
-            if (data && lastUpdate) {
-                this.lastUpdate = new Date(lastUpdate);
-                return JSON.parse(data);
+            const json = JSON.parse(localStorage.getItem(CHAVE_CACHE) || 'null');
+            if (json && Array.isArray(json.obras) && json.obras.length) {
+                this.lastUpdate = json.atualizado_em ? new Date(json.atualizado_em) : null;
+                return json.obras;
             }
         } catch (error) {
             console.error('Erro ao carregar cache:', error);
         }
         return null;
     }
-
-    hasCachedData() {
-        return localStorage.getItem('obras_data') !== null;
-    }
-
-    setupServiceWorker() {
-        // Service Worker é registrado no HTML
-        // Aqui podemos adicionar lógica adicional se necessário
-    }
 }
 
-// Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new ObraApp();
 });
 
-// Handle back button on mobile
-window.addEventListener('popstate', (e) => {
-    if (window.app) {
-        window.app.closeModal();
-    }
+// Botão voltar do celular fecha o detalhe.
+window.addEventListener('popstate', () => {
+    if (window.app) window.app.closeModal();
 });

@@ -1,7 +1,7 @@
 // Service Worker para Consulta de Obras PWA
-const CACHE_NAME = 'consulta-obras-v4'; 
-const STATIC_CACHE = 'consulta-obras-static-v4';
-const DYNAMIC_CACHE = 'consulta-obras-dynamic-v4';
+const CACHE_NAME = 'consulta-obras-v5'; 
+const STATIC_CACHE = 'consulta-obras-static-v5';
+const DYNAMIC_CACHE = 'consulta-obras-dynamic-v5';
 
 // Arquivos para cache estático
 const STATIC_ASSETS = [
